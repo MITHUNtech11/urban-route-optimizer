@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+
+# Generated geospatial caches and outputs
+cache/
+data/*.graphml
+output/*.html
+
+# Local app/runtime files
+.streamlit/
+*.log

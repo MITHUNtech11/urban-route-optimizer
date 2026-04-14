@@ -1,90 +1,170 @@
-Urban Route Optimizer: Graph-Based Path Planning 🛵🗺️
-📌 Project Overview
-Even after living in a city for over a decade, memorizing every optimal route, shortcut, and one-way street can be surprisingly difficult. This project is a Python-based geospatial analysis tool designed to calculate the most efficient, shortest, and navigable paths through complex urban street networks.
+# Urban Route Optimizer
 
-By representing city streets as mathematical graphs (nodes and edges), this tool helps commuters—specifically those on lightweight two-wheelers like a 110cc scooter—find the optimal path between any two points, eliminating the guesswork of daily navigation.
+Graph-based path planning for urban two-wheelers using OpenStreetMap data.
 
-🚀 Features
-Real-World Graph Extraction: Pulls live street network data from OpenStreetMap (OSM) for specific regions or cities.
+This project calculates realistic routes between two coordinates, supports Dijkstra and A* search, shows alternative paths, estimates travel time, and exports a polished interactive HTML map suitable for demo presentations and college project reviews.
 
-Algorithm-Driven Routing: Utilizes graph theory algorithms (like Dijkstra's or A*) to calculate the mathematically shortest path based on road distance.
+## Project Highlights
 
-Two-Wheeler Optimization: Filters road networks to prioritize drivable paths suitable for bikes and scooters, ignoring heavy-transit-only highways where applicable.
+- Real city street network extraction from OpenStreetMap.
+- Two-wheeler oriented route profile for scooters (filters unsuitable highway types).
+- Dijkstra and A* shortest-path algorithms.
+- Traffic-aware travel-time routing with configurable time slots and congestion level.
+- Alternative route generation using k-shortest simple paths.
+- Offline-only routing using cached or explicitly selected local GraphML files.
+- Real-time context integration:
+	- live weather-aware route weighting (Open-Meteo)
+	- optional live traffic override (TomTom Flow API)
+- Specialized use cases:
+	- emergency response routing priority mode
+	- multi-stop delivery optimization workflow
+- Urban planning analytics:
+	- route-usage heatmap layer
+	- hotspot segment detection
+	- infrastructure recommendation hints
+- Route metrics: distance, ETA, node count, and coordinate snap distance diagnostics.
+- Local graph caching for faster repeated runs.
+- Presentation-ready Folium map output with:
+  - animated primary route
+  - alternative route layers
+  - fullscreen, minimap, and distance measurement tools
+  - styled route summary panel
 
-Interactive Visualization: Generates an interactive, browser-based map rendering the starting point, destination, and the algorithmically optimized route overlay.
+## Tech Stack
 
-🛠️ Tech Stack
-Language: Python 3.9+
+- Python 3.9+
+- osmnx
+- networkx
+- folium
+- pandas
+- geopandas
+- pyproj
+- streamlit
 
-Geospatial Data: osmnx (for querying OpenStreetMap data)
+## Installation
 
-Discrete Math & Algorithms: networkx (for graph construction and shortest-path calculations)
+1. Clone the repository:
 
-Visualization: folium (for generating interactive Leaflet maps)
+	git clone https://github.com/MITHUNtech11/urban-route-optimizer.git
 
-Data Handling: pandas, geopandas
+2. Move into the project folder:
 
-⚙️ Installation & Setup
-Clone the repository:
+	cd urban-route-optimizer
 
-Bash
-git clone https://github.com/yourusername/urban-route-optimizer.git
-cd urban-route-optimizer
-Create a virtual environment (Recommended):
+3. Create and activate a virtual environment:
 
-Bash
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-Install the required dependencies:
+	Windows (PowerShell):
+	python -m venv venv
+	.\venv\Scripts\Activate.ps1
 
-Bash
-pip install osmnx networkx folium pandas geopandas
-(Note: geopandas and osmnx can sometimes have complex C-dependencies. Using conda instead of pip is highly recommended if you run into installation errors.)
+	macOS/Linux:
+	python -m venv venv
+	source venv/bin/activate
 
-💻 Usage Example
-The main script allows you to input a starting location and a destination to generate your route map.
+4. Install dependencies:
 
-Python
-import osmnx as ox
-import networkx as nx
-import folium
+	pip install -r requirements.txt
 
-# 1. Define the local area (e.g., Kuthambakkam or your specific city region)
-place_name = "Kuthambakkam, Tamil Nadu, India"
-graph = ox.graph_from_place(place_name, network_type='drive')
+Note: osmnx/geopandas may require platform geospatial binaries. If installation fails on your system, use conda for a smoother geospatial setup.
 
-# 2. Define Start and End coordinates (Latitude, Longitude)
-start_point = (13.0400, 80.0100) # Example coords
-end_point = (13.0500, 80.0200)   # Example coords
+## Quick Start
 
-# 3. Find the nearest network nodes to the coordinates
-orig_node = ox.distance.nearest_nodes(graph, X=start_point[1], Y=start_point[0])
-dest_node = ox.distance.nearest_nodes(graph, X=end_point[1], Y=end_point[0])
+Run with defaults (Chennai sample points):
 
-# 4. Calculate the shortest path using NetworkX
-shortest_path = nx.shortest_path(graph, orig_node, dest_node, weight='length')
+python main.py
 
-# 5. Plot the route on an interactive map
-route_map = ox.plot_route_folium(graph, shortest_path)
-route_map.save('optimized_route.html')
-print("Map saved as optimized_route.html! Open it in your browser.")
-📂 Project Structure
-Plaintext
+Run a custom route:
+
+python main.py --place "Bangalore, Karnataka, India" --start "12.9716,77.5946" --end "12.9689,77.5941"
+
+Use A* with extra alternatives:
+
+python main.py --algorithm astar --alternatives 3 --speed 30
+
+Use traffic-aware travel-time routing:
+
+python main.py --weight-mode traffic --time-slot evening_peak --traffic-level 1.4
+
+Run in offline-only mode using local graph cache:
+
+python main.py --offline --graph-file "data/chennai-tamil-nadu-india-scooter.graphml"
+
+Run emergency routing with real-time context:
+
+python main.py --use-case emergency --realtime --traffic-live --traffic-api-key YOUR_TOMTOM_KEY
+
+Run delivery optimization with multiple stops:
+
+python main.py --use-case delivery --stops "13.055,80.244;13.048,80.251" --return-to-start
+
+Generate bike network output:
+
+python main.py --profile bike --place "Coimbatore, Tamil Nadu, India" --start "11.0168,76.9558" --end "11.0100,76.9700"
+
+Disable cache and force fresh download:
+
+python main.py --no-cache
+
+Launch the interactive Streamlit dashboard:
+
+python -m streamlit run streamlit_app.py
+
+The generated map is saved to:
+
+output/optimized_route.html
+
+## CLI Options
+
+- --place: city/area name (default: Chennai, Tamil Nadu, India)
+- --start: start coordinate as lat,lon
+- --end: end coordinate as lat,lon
+- --profile: scooter, bike, or drive
+- --algorithm: dijkstra or astar
+- --alternatives: number of additional route options
+- --speed: average speed in km/h (for ETA)
+- --weight-mode: distance or traffic
+- --time-slot: traffic profile (early_morning, morning_peak, midday, evening_peak, night)
+- --traffic-level: congestion intensity scale 0.0 to 3.0
+- --use-case: standard, delivery, or emergency
+- --stops: semicolon-separated delivery stops (lat,lon;lat,lon)
+- --return-to-start: in delivery mode, return to start after final stop
+- --offline: force offline mode (no OSM download)
+- --graph-file: local GraphML path for offline/deterministic runs
+- --realtime: enable live context integration
+- --weather-live: weather-aware weighting (also enabled by default with --realtime)
+- --traffic-live: enable TomTom live traffic override
+- --traffic-api-key: TomTom API key used with --traffic-live
+- --no-cache: skip graph cache and refetch from OSM
+- --output: output HTML path
+
+## Project Structure
+
 urban-route-optimizer/
-│
-├── data/                   # Directory to cache downloaded OSM graph data
-├── notebooks/              # Jupyter notebooks for data exploration and algorithm testing
-├── src/                    # Main source code
-│   ├── build_graph.py      # Script to download and structure the OSM data
-│   ├── calculate_route.py  # Pathfinding algorithms
-│   └── visualize.py        # Map generation logic
-│
-├── output/                 # Generated .html maps and analysis reports
-├── requirements.txt        # Python dependencies
-└── README.md               # Project documentation
-🔮 Future Enhancements
-Incorporate Real-Time Traffic: Integrate an API to adjust edge weights based on current traffic conditions, not just physical distance.
+|- data/                    # Cached graph files
+|- notebooks/               # Experimental notebooks
+|- output/                  # Generated HTML outputs
+|- src/
+|  |- __init__.py
+|  |- build_graph.py        # Graph download, caching, and profile filtering
+|  |- calculate_route.py    # Routing algorithms, alternatives, metrics, traffic weighting
+|  |- visualize.py          # Interactive map generation
+|- main.py                  # CLI entrypoint
+|- streamlit_app.py         # Interactive Streamlit UI
+|- docs/PROJECT_REPORT_AND_VIVA.md
+|- requirements.txt
+|- README.md
 
-Fuel Cost Estimator: Add a feature to estimate fuel consumption based on total route distance and average scooter mileage.
+## Suggested Demo Flow (For Viva/Presentation)
 
-Multi-Stop Routing (Traveling Salesperson Problem): Expand the algorithm to calculate the most efficient route when running multiple errands across town.
+1. Show terminal run with custom city and points.
+2. Explain selected algorithm (Dijkstra or A*).
+3. Open HTML map and toggle route layers.
+4. Highlight route panel metrics (distance and ETA).
+5. Explain two-wheeler filtering and graph caching advantage.
+
+## Future Enhancements
+
+- Public transport and multimodal interchange support.
+- Fleet-scale delivery VRP optimization (capacity and time windows).
+- Exportable planning reports (CSV/PDF) for city agencies.
+- Carbon-emission optimization and sustainability scoring.
