@@ -3,6 +3,7 @@
 
 from pathlib import Path
 
+import osmnx as ox
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -14,7 +15,6 @@ from src.analytics import build_route_heatmap_points, generate_urban_insights
 from src.build_graph import build_graph, list_cached_graphs
 from src.calculate_route import calculate_routes
 from src.realtime import build_realtime_context
-from src.specialized import optimize_delivery_route
 from src.visualize import visualize_route
 
 
@@ -25,33 +25,6 @@ TIME_SLOT_OPTIONS = [
     "evening_peak",
     "night",
 ]
-
-USE_CASE_OPTIONS = ["standard", "delivery", "emergency"]
-
-
-def parse_coordinate_pair(value):
-    try:
-        lat_str, lon_str = [part.strip() for part in value.split(",", maxsplit=1)]
-        return float(lat_str), float(lon_str)
-    except ValueError as exc:
-        raise ValueError(
-            f"Invalid coordinate '{value}'. Use lat,lon format like 13.065,80.237"
-        ) from exc
-
-
-def parse_stop_points(value):
-    stop_points = []
-    for line in (value or "").splitlines():
-        cleaned = line.strip()
-        if not cleaned:
-            continue
-        stop_points.append(parse_coordinate_pair(cleaned))
-    return stop_points
-
-
-def format_point(point):
-    return f"{float(point[0]):.5f},{float(point[1]):.5f}"
-
 
 @st.cache_resource(show_spinner=False)
 def load_cached_graph(place_name, profile, use_cache, offline, graph_file):
@@ -65,12 +38,18 @@ def load_cached_graph(place_name, profile, use_cache, offline, graph_file):
     )
 
 
+@st.cache_data(show_spinner=False)
+def geocode_location(query):
+    point = ox.geocode(query)
+    return float(point[0]), float(point[1])
+
+
 def initialize_state():
     defaults = {
         "route_result": None,
         "output_path": None,
         "map_html": None,
-        "last_params": None,
+        "last_inputs": None,
         "run_error": None,
     }
     for key, value in defaults.items():
@@ -129,7 +108,7 @@ def render_page_chrome():
             background:
               linear-gradient(135deg, rgba(11, 107, 100, 0.94) 0%, rgba(23, 142, 131, 0.92) 48%, rgba(33, 165, 152, 0.94) 100%);
             color: #ffffff;
-            padding: 28px 30px;
+                        padding: 24px 26px;
             box-shadow: 0 24px 44px rgba(19, 83, 82, 0.28);
             animation: fadeUp 520ms ease-out;
           }
@@ -146,7 +125,7 @@ def render_page_chrome():
           .hero h1 {
             margin: 10px 0 8px 0;
             font-family: 'Sora', sans-serif;
-            font-size: 2.15rem;
+                        font-size: 2rem;
             font-weight: 800;
             letter-spacing: 0.02em;
             line-height: 1.18;
@@ -156,60 +135,9 @@ def render_page_chrome():
             margin: 0;
             max-width: 860px;
             font-family: 'Manrope', sans-serif;
-            font-size: 1rem;
+                        font-size: 0.98rem;
             line-height: 1.54;
             opacity: 0.93;
-          }
-
-          .hero-badges {
-            margin-top: 16px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-          }
-
-          .hero-badges span {
-            border: 1px solid rgba(255, 255, 255, 0.35);
-            border-radius: 999px;
-            padding: 6px 12px;
-            font-size: 0.8rem;
-            background: rgba(255, 255, 255, 0.12);
-            font-weight: 600;
-          }
-
-          .workflow-card {
-            border-radius: 15px;
-            border: 1px solid var(--card-border);
-            background: var(--card-bg);
-            padding: 12px 13px;
-            box-shadow: 0 12px 28px rgba(21, 33, 42, 0.08);
-            min-height: 106px;
-            animation: fadeUp 560ms ease-out;
-          }
-
-          .workflow-card h4 {
-            margin: 0 0 5px 0;
-            color: var(--ink-900);
-            font-family: 'Sora', sans-serif;
-            font-size: 0.92rem;
-            font-weight: 700;
-          }
-
-          .workflow-card p {
-            margin: 0;
-            color: var(--ink-700);
-            font-family: 'Manrope', sans-serif;
-            font-size: 0.86rem;
-            line-height: 1.35;
-          }
-
-          .panel {
-            border-radius: 18px;
-            border: 1px solid var(--card-border);
-            background: var(--card-bg);
-            padding: 20px 20px 14px 20px;
-            box-shadow: 0 16px 34px rgba(21, 33, 42, 0.10);
-            animation: fadeUp 620ms ease-out;
           }
 
                     div[data-testid="stForm"] {
@@ -218,18 +146,9 @@ def render_page_chrome():
                         background: var(--card-bg);
                         padding: 16px 16px 10px 16px;
                         box-shadow: 0 16px 34px rgba(21, 33, 42, 0.10);
-                        margin-top: 8px;
-                        margin-bottom: 8px;
+                        margin-top: 10px;
+                        margin-bottom: 14px;
                     }
-
-          .section-title {
-            font-family: 'Sora', sans-serif;
-            font-weight: 700;
-            color: var(--ink-900);
-            letter-spacing: 0.02em;
-            margin-bottom: 8px;
-            font-size: 1.08rem;
-          }
 
           .helper-note {
             border-radius: 12px;
@@ -242,18 +161,6 @@ def render_page_chrome():
             font-family: 'Manrope', sans-serif;
             margin-top: 8px;
             margin-bottom: 8px;
-          }
-
-          .metric-ribbon {
-            margin: 6px 0 14px 0;
-            border-radius: 12px;
-            border: 1px solid rgba(247, 191, 86, 0.45);
-            background: rgba(247, 191, 86, 0.16);
-            padding: 8px 10px;
-            color: #594420;
-            font-weight: 600;
-            font-family: 'Manrope', sans-serif;
-            font-size: 0.86rem;
           }
 
           div[data-testid="stMetric"] {
@@ -274,30 +181,6 @@ def render_page_chrome():
             color: #102026;
             font-family: 'Sora', sans-serif;
             font-weight: 700;
-          }
-
-          .stTabs [data-baseweb="tab-list"] {
-                        gap: 14px;
-                        margin-bottom: 14px;
-                        padding-bottom: 4px;
-                        flex-wrap: wrap;
-          }
-
-          .stTabs [data-baseweb="tab"] {
-            border-radius: 999px;
-            border: 1px solid rgba(21, 33, 42, 0.12);
-            background: rgba(255, 255, 255, 0.70);
-            color: var(--ink-700);
-            font-family: 'Manrope', sans-serif;
-            font-weight: 700;
-                        padding: 10px 18px;
-            height: auto;
-          }
-
-          .stTabs [aria-selected="true"] {
-            background: linear-gradient(90deg, rgba(13, 122, 114, 0.94), rgba(25, 160, 147, 0.94));
-            color: #ffffff;
-            border-color: rgba(13, 122, 114, 0.2);
           }
 
           .empty-state {
@@ -329,101 +212,65 @@ def render_page_chrome():
               font-size: 1.7rem;
             }
 
-            .panel {
-              padding: 16px 14px 11px 14px;
+                        div[data-testid="stForm"] {
+                            padding: 14px 12px 10px 12px;
             }
           }
         </style>
 
         <section class="hero">
           <div class="hero-kicker">Urban Mobility Platform</div>
-          <h1>Urban Route Optimizer Studio</h1>
-          <p>Design robust city routes with offline confidence, live operational context, and decision-grade analytics for rider-facing web experiences.</p>
-          <div class="hero-badges">
-            <span>Traffic-aware ETA</span>
-            <span>Delivery leg optimizer</span>
-            <span>Emergency priority mode</span>
-            <span>Planning intelligence</span>
-          </div>
+          <h1>Find the best route in one step</h1>
+          <p>Enter your city and two area names. The app handles geocoding, routing, and map output automatically.</p>
         </section>
         """,
         unsafe_allow_html=True,
     )
 
 
-def render_workflow_strip():
-    cards = [
-        ("1. Configure", "Set city, coordinates, and routing profile."),
-        ("2. Optimize", "Choose distance or traffic-aware scoring."),
-        ("3. Simulate", "Blend live context and offline-safe controls."),
-        ("4. Analyze", "Review alternatives, hotspots, and map output."),
-    ]
-    cols = st.columns(len(cards))
-    for col, (title, description) in zip(cols, cards):
-        with col:
-            st.markdown(
-                f"""
-                <div class="workflow-card">
-                  <h4>{title}</h4>
-                  <p>{description}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-def render_route_studio_form():
-    st.markdown("<div class='section-title'>Route Studio</div>", unsafe_allow_html=True)
+def render_simple_form():
     st.markdown(
-        "<div class='helper-note'>Build route scenarios here, then use the tabs below to inspect outputs, metrics, and planning insights.</div>",
+        "<div class='helper-note'>Simple mode: fill City, From area, and To area, then click Find Route.</div>",
         unsafe_allow_html=True,
     )
 
-    with st.form("route_studio_form", clear_on_submit=False):
-        left_col, right_col = st.columns([1.03, 0.97], gap="large")
+    with st.form("simple_route_form", clear_on_submit=False):
+        st.markdown("### Route Input")
+        city = st.text_input(
+            "City",
+            value="Chennai, Tamil Nadu, India",
+            help="Example: Chennai, Tamil Nadu, India",
+        )
 
-        with left_col:
-            st.markdown("### Trip Geometry")
-            place_name = st.text_input(
-                "City or region",
-                value="Chennai, Tamil Nadu, India",
-                help="Use place names recognized by OpenStreetMap geocoding.",
-            )
+        area_cols = st.columns(2)
+        start_area = area_cols[0].text_input(
+            "From area",
+            value="T Nagar",
+            help="Use a neighborhood, landmark, or area name.",
+        )
+        end_area = area_cols[1].text_input(
+            "To area",
+            value="Adyar",
+            help="Use a neighborhood, landmark, or area name.",
+        )
 
-            coord_cols = st.columns(2)
-            start_raw = coord_cols[0].text_input("Start (lat,lon)", value="13.065,80.237")
-            end_raw = coord_cols[1].text_input("End (lat,lon)", value="13.045,80.260")
+        with st.expander("Advanced settings (optional)", expanded=False):
+            tuning_cols = st.columns(3)
+            profile = tuning_cols[0].selectbox("Vehicle", ["scooter", "bike", "drive"], index=0)
+            algorithm = tuning_cols[1].selectbox("Algorithm", ["dijkstra", "astar"], index=0)
+            alternatives = tuning_cols[2].slider("Alternatives", min_value=0, max_value=3, value=1)
 
-            mode_cols = st.columns(3)
-            use_case = mode_cols[0].selectbox("Use case", USE_CASE_OPTIONS, index=0)
-            profile = mode_cols[1].selectbox("Vehicle profile", ["scooter", "bike", "drive"], index=0)
-            algorithm = mode_cols[2].selectbox("Search algorithm", ["dijkstra", "astar"], index=0)
-
-            if use_case == "delivery":
-                stops_raw = st.text_area(
-                    "Delivery stops (one per line)",
-                    value="13.055,80.244\n13.048,80.251",
-                    height=110,
-                    help="Format each stop as lat,lon on a separate line.",
-                )
-                return_to_start = st.checkbox("Return to origin after final stop", value=False)
-            else:
-                stops_raw = ""
-                return_to_start = False
-
-            st.markdown("### Optimization Controls")
-            alternatives = st.slider("Alternative routes", min_value=0, max_value=3, value=1)
-            avg_speed = st.slider(
-                "Average speed (km/h)",
+            weight_cols = st.columns(3)
+            weight_mode = weight_cols[0].selectbox("Objective", ["traffic", "distance"], index=0)
+            avg_speed = weight_cols[1].slider(
+                "Avg speed (km/h)",
                 min_value=10.0,
                 max_value=60.0,
                 value=28.0,
                 step=1.0,
             )
-
-            weight_mode = st.selectbox("Objective", ["distance", "traffic"], index=1)
             if weight_mode == "traffic":
-                time_slot = st.selectbox("Traffic slot", TIME_SLOT_OPTIONS, index=2)
+                time_slot = weight_cols[2].selectbox("Traffic slot", TIME_SLOT_OPTIONS, index=2)
                 traffic_level = st.slider(
                     "Traffic intensity",
                     min_value=0.0,
@@ -435,57 +282,38 @@ def render_route_studio_form():
                 time_slot = "midday"
                 traffic_level = 1.0
 
-        with right_col:
-            st.markdown("### Live Operations")
-            realtime_enabled = st.checkbox("Enable live operational context", value=False)
-            weather_enabled = st.checkbox("Weather-aware weighting", value=True)
-            traffic_live_enabled = st.checkbox("Live traffic override (TomTom)", value=False)
-            traffic_api_key = st.text_input(
-                "TomTom API key",
-                value="",
-                type="password",
-                help="Required only when live traffic override is enabled.",
-            )
-
-            st.markdown("### Data Source and Reliability")
-            offline_mode = st.checkbox("Offline-only mode", value=False)
-            use_cache = st.checkbox("Use graph cache", value=True)
+            data_cols = st.columns(2)
+            offline_mode = data_cols[0].checkbox("Offline-only mode", value=False)
+            use_cache = data_cols[1].checkbox("Use graph cache", value=True)
 
             available_graphs = [
                 str(path) for path in list_cached_graphs(cache_dir="data", profile=profile)
             ]
-            graph_option_labels = ["Auto-select by place/profile"] + [
-                Path(path).name for path in available_graphs
-            ]
-            graph_option_values = [""] + available_graphs
+            graph_labels = ["Auto-select by city/profile"] + [Path(path).name for path in available_graphs]
+            graph_values = [""] + available_graphs
             graph_option_index = st.selectbox(
                 "Offline graph file",
-                options=list(range(len(graph_option_values))),
-                format_func=lambda idx: graph_option_labels[idx],
+                options=list(range(len(graph_values))),
+                format_func=lambda idx: graph_labels[idx],
                 index=0,
-                help="Pick a local GraphML file for deterministic routing runs.",
             )
 
-            output_file = st.text_input("Output map HTML", value="output/streamlit_route.html")
+            realtime_enabled = st.checkbox("Enable live context", value=False)
+            weather_enabled = st.checkbox("Weather-aware weighting", value=True)
+            traffic_live_enabled = st.checkbox("Live traffic override (TomTom)", value=False)
+            traffic_api_key = st.text_input("TomTom API key", value="", type="password")
 
-            st.markdown("### Run")
-            st.caption(
-                "Submit once to render map output, route alternatives, and planning intelligence."
-            )
-            optimize_clicked = st.form_submit_button(
-                "Generate Route Experience",
-                use_container_width=True,
-                type="primary",
-            )
+        optimize_clicked = st.form_submit_button(
+            "Find Route",
+            use_container_width=True,
+            type="primary",
+        )
 
     return {
-        "place_name": place_name,
-        "start_raw": start_raw,
-        "end_raw": end_raw,
+        "city": city.strip(),
+        "start_area": start_area.strip(),
+        "end_area": end_area.strip(),
         "profile": profile,
-        "use_case": use_case,
-        "stops_raw": stops_raw,
-        "return_to_start": return_to_start,
         "algorithm": algorithm,
         "alternatives": alternatives,
         "avg_speed": avg_speed,
@@ -498,32 +326,48 @@ def render_route_studio_form():
         "traffic_api_key": traffic_api_key,
         "offline_mode": offline_mode,
         "use_cache": use_cache,
-        "graph_file": graph_option_values[graph_option_index] or None,
-        "output_file": output_file,
+        "graph_file": graph_values[graph_option_index] or None,
+        "output_file": "output/streamlit_route.html",
         "optimize_clicked": optimize_clicked,
     }
 
 
-def sanitize_params_for_display(params):
-    redacted = {
-        key: value
-        for key, value in params.items()
-        if key not in {"optimize_clicked", "traffic_api_key"}
-    }
-    redacted["traffic_api_key_set"] = bool(params.get("traffic_api_key"))
-    return redacted
+def validate_simple_inputs(params):
+    if not params["city"]:
+        raise ValueError("Please enter a city.")
+    if not params["start_area"]:
+        raise ValueError("Please enter a start area.")
+    if not params["end_area"]:
+        raise ValueError("Please enter a destination area.")
+
+
+def geocode_area(city, area_label, area_type):
+    query = f"{area_label}, {city}"
+    try:
+        point = geocode_location(query)
+        return point, query
+    except Exception as exc:
+        raise ValueError(
+            f"Could not find the {area_type} area '{area_label}' in '{city}'. Try a nearby landmark or neighborhood name."
+        ) from exc
 
 
 def execute_optimization(params):
-    start_point = parse_coordinate_pair(params["start_raw"])
-    end_point = parse_coordinate_pair(params["end_raw"])
-    stop_points = parse_stop_points(params["stops_raw"])
+    validate_simple_inputs(params)
 
-    if params["use_case"] == "delivery" and not stop_points:
-        raise ValueError("Delivery mode requires at least one stop in the Delivery stops field.")
+    start_point, start_query = geocode_area(
+        city=params["city"],
+        area_label=params["start_area"],
+        area_type="start",
+    )
+    end_point, end_query = geocode_area(
+        city=params["city"],
+        area_label=params["end_area"],
+        area_type="destination",
+    )
 
     graph = load_cached_graph(
-        place_name=params["place_name"],
+        place_name=params["city"],
         profile=params["profile"],
         use_cache=params["use_cache"],
         offline=params["offline_mode"],
@@ -546,33 +390,19 @@ def execute_optimization(params):
         traffic_api_key=params["traffic_api_key"],
     )
 
-    if params["use_case"] == "delivery":
-        route_result = optimize_delivery_route(
-            graph=graph,
-            start_point=start_point,
-            stop_points=stop_points,
-            algorithm=params["algorithm"],
-            avg_speed_kmph=params["avg_speed"],
-            weight_mode=params["weight_mode"],
-            time_slot=params["time_slot"],
-            traffic_level=params["traffic_level"],
-            realtime_context=realtime_context,
-            return_to_start=params["return_to_start"],
-        )
-    else:
-        route_result = calculate_routes(
-            graph=graph,
-            start_point=start_point,
-            end_point=end_point,
-            algorithm=params["algorithm"],
-            alternatives=params["alternatives"],
-            avg_speed_kmph=params["avg_speed"],
-            weight_mode=params["weight_mode"],
-            time_slot=params["time_slot"],
-            traffic_level=params["traffic_level"],
-            realtime_context=realtime_context,
-            use_case=params["use_case"],
-        )
+    route_result = calculate_routes(
+        graph=graph,
+        start_point=start_point,
+        end_point=end_point,
+        algorithm=params["algorithm"],
+        alternatives=params["alternatives"],
+        avg_speed_kmph=params["avg_speed"],
+        weight_mode=params["weight_mode"],
+        time_slot=params["time_slot"],
+        traffic_level=params["traffic_level"],
+        realtime_context=realtime_context,
+        use_case="standard",
+    )
 
     if route_result is None:
         raise RuntimeError("No path found for the selected points and settings.")
@@ -592,7 +422,7 @@ def execute_optimization(params):
         routes=route_result["routes"],
         output_file=str(output_path),
         route_summaries=route_result.get("summaries"),
-        place_name=params["place_name"],
+        place_name=params["city"],
         snap_info=route_result.get("snap"),
         heatmap_points=planning.get("heatmap_points"),
         planning_hotspots=planning.get("hotspots"),
@@ -600,7 +430,17 @@ def execute_optimization(params):
 
     map_html = output_path.read_text(encoding="utf-8") if output_path.exists() else None
 
-    return route_result, output_path, map_html
+    simple_inputs = {
+        "city": params["city"],
+        "from": params["start_area"],
+        "to": params["end_area"],
+        "resolved_from": start_query,
+        "resolved_to": end_query,
+        "profile": params["profile"],
+        "objective": params["weight_mode"],
+        "traffic_slot": params["time_slot"],
+    }
+    return route_result, output_path, map_html, simple_inputs
 
 
 def build_route_comparison_rows(route_result):
@@ -624,47 +464,31 @@ def build_route_comparison_rows(route_result):
             "Avg speed (km/h)": round(float(summary.get("avg_speed_kmph", 0.0)), 2),
         }
 
-        if summary.get("from_point") and summary.get("to_point"):
-            row["From"] = format_point(summary["from_point"])
-            row["To"] = format_point(summary["to_point"])
-
         rows.append(row)
     return rows
 
 
-def render_highlights(route_result):
+def render_highlights(route_result, last_inputs):
     summaries = route_result.get("summaries", [])
     if not summaries:
         st.warning("No route summaries were generated.")
         return
 
-    routing = route_result.get("routing", {})
-    use_case = routing.get("use_case", "standard")
-    weight_mode = routing.get("weight_mode", "distance")
-
-    if use_case == "delivery" and route_result.get("delivery"):
-        delivery = route_result["delivery"]
-        cols = st.columns(4)
-        cols[0].metric("Total distance", f"{delivery.get('total_distance_km', 0.0):.2f} km")
-        cols[1].metric("Total ETA", f"{delivery.get('total_eta_min', 0.0):.1f} min")
-        cols[2].metric("Leg count", f"{delivery.get('total_legs', 0)}")
-        cols[3].metric("Unreachable stops", f"{len(delivery.get('unreachable_stops', []))}")
-        return
-
     primary = summaries[0]
     cols = st.columns(4)
-    cols[0].metric("Primary distance", f"{primary.get('distance_km', 0.0):.2f} km")
-    cols[1].metric("Primary ETA", f"{primary.get('eta_min', 0.0):.1f} min")
+    cols[0].metric("Distance", f"{primary.get('distance_km', 0.0):.2f} km")
+    cols[1].metric("ETA", f"{primary.get('eta_min', 0.0):.1f} min")
     cols[2].metric("Path nodes", f"{primary.get('node_count', 0)}")
-    if weight_mode == "traffic":
-        cols[3].metric("Traffic delay", f"{primary.get('traffic_delta_min', 0.0):+.1f} min")
-    else:
-        cols[3].metric("Average speed", f"{primary.get('avg_speed_kmph', 0.0):.1f} km/h")
+    cols[3].metric("Average speed", f"{primary.get('avg_speed_kmph', 0.0):.1f} km/h")
+
+    st.caption(
+        f"Showing route from {last_inputs.get('from', 'Start')} to {last_inputs.get('to', 'End')} in {last_inputs.get('city', 'selected city')}."
+    )
 
 
 def render_realtime_context(realtime):
     if not realtime or not realtime.get("enabled"):
-        st.info("Live context was disabled for this run.")
+        st.caption("Live context was disabled for this run.")
         return
 
     st.markdown("#### Real-Time Context")
@@ -703,7 +527,7 @@ def render_realtime_context(realtime):
 
 def render_planning_insights(planning):
     if not planning:
-        st.info("Planning insights are not available for this run.")
+        st.caption("Planning insights are not available for this run.")
         return
 
     cols = st.columns(2)
@@ -726,52 +550,34 @@ def render_planning_insights(planning):
         st.markdown("\n".join([f"- {item}" for item in recommendations]))
 
 
-def render_result_hub(route_result, output_path, map_html, run_params):
-    st.markdown("<div class='section-title'>Result Hub</div>", unsafe_allow_html=True)
-    tabs = st.tabs(["Map Experience", "Route Intelligence", "Urban Signals", "Run Context"])
+def render_result_section(route_result, output_path, map_html, last_inputs):
+    st.markdown("### Route Output")
+    render_highlights(route_result, last_inputs)
 
-    with tabs[0]:
-        render_highlights(route_result)
-        st.markdown(
-            "<div class='metric-ribbon'>Use the map tools to inspect alternatives, measure distances, and compare corridor usage.</div>",
-            unsafe_allow_html=True,
-        )
-        if map_html:
-            components.html(map_html, height=780, scrolling=True)
-            st.success(f"Route output is displayed above and saved at: {output_path}")
-        elif output_path.exists():
-            components.html(output_path.read_text(encoding="utf-8"), height=780, scrolling=True)
-            st.success(f"Route output is displayed above and saved at: {output_path}")
-        else:
-            st.warning("Map file is missing. Please run optimization again.")
+    if map_html:
+        components.html(map_html, height=780, scrolling=True)
+        st.success(f"Route output is displayed above and saved at: {output_path}")
+    elif output_path.exists():
+        components.html(output_path.read_text(encoding="utf-8"), height=780, scrolling=True)
+        st.success(f"Route output is displayed above and saved at: {output_path}")
+    else:
+        st.warning("Map file is missing. Please run again.")
 
-    with tabs[1]:
+    with st.expander("See detailed route data", expanded=False):
         rows = build_route_comparison_rows(route_result)
         if rows:
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-        else:
-            st.info("No route comparison rows generated for this run.")
 
         snap = route_result.get("snap") or {}
-        st.markdown(
-            f"""
-            <div class="helper-note">
-              <b>Snap diagnostics:</b> start snapped by {snap.get('start_to_node_m', 0.0):.0f} m,
-              end snapped by {snap.get('end_to_node_m', 0.0):.0f} m.
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.caption(
+            f"Snap diagnostics: start snapped by {snap.get('start_to_node_m', 0.0):.0f} m, end snapped by {snap.get('end_to_node_m', 0.0):.0f} m."
         )
 
         render_realtime_context(route_result.get("realtime") or {})
-
-    with tabs[2]:
         render_planning_insights(route_result.get("planning"))
 
-    with tabs[3]:
-        st.markdown("#### Inputs used in latest run")
-        st.json(run_params)
-        st.caption("Secrets are masked. Coordinates and parameters reflect the last successful optimization.")
+        st.markdown("#### Last search")
+        st.json(last_inputs)
 
 
 def render_empty_state():
@@ -779,8 +585,8 @@ def render_empty_state():
         """
         <div class="empty-state">
           <b>Ready to plan.</b><br/>
-          Configure a route scenario in Route Studio and click <i>Generate Route Experience</i>.
-          Your map, alternatives, and analytics will appear in the Result Hub.
+                    Enter your City, From area, and To area, then click <i>Find Route</i>.
+                    The optimized map will appear right below.
         </div>
         """,
         unsafe_allow_html=True,
@@ -790,20 +596,19 @@ def render_empty_state():
 def main():
     render_page_chrome()
     initialize_state()
-    render_workflow_strip()
-    params = render_route_studio_form()
+    params = render_simple_form()
 
     if params["optimize_clicked"]:
         try:
             with st.spinner(
-                "Preparing graph, integrating context, optimizing routes, and rendering the experience..."
+                "Finding areas, building graph, optimizing route, and rendering map..."
             ):
-                route_result, output_path, map_html = execute_optimization(params)
+                route_result, output_path, map_html, last_inputs = execute_optimization(params)
 
             st.session_state["route_result"] = route_result
             st.session_state["output_path"] = str(output_path)
             st.session_state["map_html"] = map_html
-            st.session_state["last_params"] = sanitize_params_for_display(params)
+            st.session_state["last_inputs"] = last_inputs
             st.session_state["run_error"] = None
         except (ValueError, RuntimeError) as exc:
             st.session_state["run_error"] = str(exc)
@@ -812,11 +617,11 @@ def main():
         st.error(st.session_state["run_error"])
 
     if st.session_state.get("route_result") and st.session_state.get("output_path"):
-        render_result_hub(
+        render_result_section(
             route_result=st.session_state["route_result"],
             output_path=Path(st.session_state["output_path"]),
             map_html=st.session_state.get("map_html"),
-            run_params=st.session_state.get("last_params") or {},
+            last_inputs=st.session_state.get("last_inputs") or {},
         )
     else:
         render_empty_state()
