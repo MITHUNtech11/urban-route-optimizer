@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Streamlit front-end for the Urban Route Optimizer project."""
 
+import difflib
 from pathlib import Path
 
 import osmnx as ox
@@ -25,6 +26,100 @@ TIME_SLOT_OPTIONS = [
     "evening_peak",
     "night",
 ]
+
+CITY_SUGGESTIONS = [
+    "Chennai, Tamil Nadu, India",
+    "Bengaluru, Karnataka, India",
+    "Hyderabad, Telangana, India",
+    "Mumbai, Maharashtra, India",
+    "Pune, Maharashtra, India",
+    "Delhi, India",
+    "Kolkata, West Bengal, India",
+    "Ahmedabad, Gujarat, India",
+    "Jaipur, Rajasthan, India",
+    "Kochi, Kerala, India",
+    "Coimbatore, Tamil Nadu, India",
+    "Madurai, Tamil Nadu, India",
+    "Visakhapatnam, Andhra Pradesh, India",
+]
+
+AREA_TAGS = {
+    "place": [
+        "suburb",
+        "neighbourhood",
+        "quarter",
+        "city_district",
+        "locality",
+    ]
+}
+
+
+def _normalize_place_name(value):
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            cleaned = _normalize_place_name(item)
+            if cleaned:
+                return cleaned
+
+    return None
+
+
+@st.cache_data(show_spinner=False)
+def get_city_area_suggestions(city, max_results=300):
+    city = (city or "").strip()
+    if not city:
+        return []
+
+    try:
+        area_frame = ox.features_from_place(city, tags=AREA_TAGS)
+    except Exception:
+        return []
+
+    if area_frame is None or area_frame.empty:
+        return []
+
+    name_columns = [
+        column
+        for column in ["name", "name:en", "official_name", "short_name", "alt_name"]
+        if column in area_frame.columns
+    ]
+
+    suggestions = set()
+    for column in name_columns:
+        for raw_name in area_frame[column].dropna().tolist():
+            cleaned = _normalize_place_name(raw_name)
+            if cleaned:
+                suggestions.add(cleaned)
+
+    ordered = sorted(suggestions, key=lambda item: item.casefold())
+    return ordered[: max(1, int(max_results))]
+
+
+def _clean_text(value):
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _build_close_match_hint(area_label, area_suggestions):
+    if not area_label or not area_suggestions:
+        return ""
+
+    matches = difflib.get_close_matches(
+        area_label,
+        area_suggestions,
+        n=3,
+        cutoff=0.72,
+    )
+    if not matches:
+        return ""
+
+    joined = ", ".join([f"'{item}'" for item in matches])
+    return f" Try one of these nearby matches: {joined}."
 
 @st.cache_resource(show_spinner=False)
 def load_cached_graph(place_name, profile, use_cache, offline, graph_file):
@@ -234,25 +329,54 @@ def render_simple_form():
         unsafe_allow_html=True,
     )
 
-    with st.form("simple_route_form", clear_on_submit=False):
-        st.markdown("### Route Input")
-        city = st.text_input(
-            "City",
-            value="Chennai, Tamil Nadu, India",
-            help="Example: Chennai, Tamil Nadu, India",
+    st.markdown("### Route Input")
+    city = st.selectbox(
+        "City",
+        options=CITY_SUGGESTIONS,
+        index=0,
+        key="city_select",
+        help="Type letters to filter city suggestions and select the exact city.",
+    )
+    city = _clean_text(city)
+
+    if st.session_state.get("area_suggestion_city") != city:
+        st.session_state["area_suggestion_city"] = city
+        st.session_state.pop("from_area_select", None)
+        st.session_state.pop("to_area_select", None)
+
+    area_suggestions = get_city_area_suggestions(city)
+    use_area_dropdowns = bool(area_suggestions)
+    if use_area_dropdowns:
+        st.caption(
+            "Area suggestions loaded. Type in each dropdown to filter and pick the correct area name."
+        )
+    else:
+        st.warning(
+            "Area suggestions are currently unavailable for this city. Please retry in a few seconds or choose another city."
         )
 
+    with st.form("simple_route_form", clear_on_submit=False):
         area_cols = st.columns(2)
-        start_area = area_cols[0].text_input(
-            "From area",
-            value="T Nagar",
-            help="Use a neighborhood, landmark, or area name.",
-        )
-        end_area = area_cols[1].text_input(
-            "To area",
-            value="Adyar",
-            help="Use a neighborhood, landmark, or area name.",
-        )
+        if use_area_dropdowns:
+            start_area = area_cols[0].selectbox(
+                "From area",
+                options=area_suggestions,
+                index=None,
+                key="from_area_select",
+                help="Type letters to filter area options and avoid spelling mistakes.",
+            )
+            end_area = area_cols[1].selectbox(
+                "To area",
+                options=area_suggestions,
+                index=None,
+                key="to_area_select",
+                help="Type letters to filter area options and avoid spelling mistakes.",
+            )
+        else:
+            start_area = None
+            end_area = None
+            area_cols[0].info("From area list unavailable")
+            area_cols[1].info("To area list unavailable")
 
         with st.expander("Advanced settings (optional)", expanded=False):
             tuning_cols = st.columns(3)
@@ -307,12 +431,13 @@ def render_simple_form():
             "Find Route",
             use_container_width=True,
             type="primary",
+            disabled=not use_area_dropdowns,
         )
 
     return {
-        "city": city.strip(),
-        "start_area": start_area.strip(),
-        "end_area": end_area.strip(),
+        "city": city,
+        "start_area": _clean_text(start_area),
+        "end_area": _clean_text(end_area),
         "profile": profile,
         "algorithm": algorithm,
         "alternatives": alternatives,
@@ -329,26 +454,50 @@ def render_simple_form():
         "graph_file": graph_values[graph_option_index] or None,
         "output_file": "output/streamlit_route.html",
         "optimize_clicked": optimize_clicked,
+        "area_suggestions": area_suggestions,
     }
 
 
 def validate_simple_inputs(params):
     if not params["city"]:
-        raise ValueError("Please enter a city.")
+        raise ValueError("Please choose a city from suggestions.")
+    area_suggestions = params.get("area_suggestions") or []
+    if not area_suggestions:
+        raise RuntimeError(
+            "Area suggestions are unavailable for the selected city. Please retry or choose another city."
+        )
     if not params["start_area"]:
-        raise ValueError("Please enter a start area.")
+        raise ValueError("Please choose a start area from the suggestions.")
     if not params["end_area"]:
-        raise ValueError("Please enter a destination area.")
+        raise ValueError("Please choose a destination area from the suggestions.")
+
+    allowed_names = {name.casefold() for name in area_suggestions}
+
+    if params["start_area"].casefold() not in allowed_names:
+        hint = _build_close_match_hint(params["start_area"], area_suggestions)
+        raise ValueError(
+            f"Start area '{params['start_area']}' is not valid for '{params['city']}'.{hint}"
+        )
+
+    if params["end_area"].casefold() not in allowed_names:
+        hint = _build_close_match_hint(params["end_area"], area_suggestions)
+        raise ValueError(
+            f"Destination area '{params['end_area']}' is not valid for '{params['city']}'.{hint}"
+        )
+
+    if params["start_area"].casefold() == params["end_area"].casefold():
+        raise ValueError("Please choose different areas for start and destination.")
 
 
-def geocode_area(city, area_label, area_type):
+def geocode_area(city, area_label, area_type, area_suggestions=None):
     query = f"{area_label}, {city}"
     try:
         point = geocode_location(query)
         return point, query
     except Exception as exc:
+        hint = _build_close_match_hint(area_label, area_suggestions or [])
         raise ValueError(
-            f"Could not find the {area_type} area '{area_label}' in '{city}'. Try a nearby landmark or neighborhood name."
+            f"Could not find the {area_type} area '{area_label}' in '{city}'.{hint}"
         ) from exc
 
 
@@ -359,11 +508,13 @@ def execute_optimization(params):
         city=params["city"],
         area_label=params["start_area"],
         area_type="start",
+        area_suggestions=params.get("area_suggestions"),
     )
     end_point, end_query = geocode_area(
         city=params["city"],
         area_label=params["end_area"],
         area_type="destination",
+        area_suggestions=params.get("area_suggestions"),
     )
 
     graph = load_cached_graph(

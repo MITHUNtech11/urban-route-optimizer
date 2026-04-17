@@ -16,3 +16,5 @@ output/*.html
 # Local app/runtime files
 .streamlit/
 *.log
+
+cache/

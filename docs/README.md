@@ -4,6 +4,10 @@ Graph-based path planning for urban two-wheelers using OpenStreetMap data.
 
 This project calculates realistic routes between two coordinates, supports Dijkstra and A* search, shows alternative paths, estimates travel time, and exports a polished interactive HTML map suitable for demo presentations and college project reviews.
 
+Complete technical and user documentation is available at:
+
+- docs/COMPLETE_PROJECT_DOCUMENTATION.md
+
 ## Project Highlights
 
 - Real city street network extraction from OpenStreetMap.
